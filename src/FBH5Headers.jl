@@ -5,32 +5,11 @@ import Pkg
 
 ##
 
-@info "adding worker processes"
-@time ws = addprocs([("blpc$i $(getaddrinfo("blpc$i.tenge.pvt"))", :auto) for i in 0:3];
+@info "adding worker processes asynchronously"
+addworkertask = @async addprocs(
+    [("blpc$i $(getaddrinfo("blpc$i.tenge.pvt"))", :auto) for i in 0:3];
     exeflags="--project=$(Pkg.project().path)"
 )
-@info "added $(nworkers()) worker processes"
-
-##
-
-@info "defining h5header function everywhere"
-
-@everywhere using HDF5, Blio
-
-@everywhere function h5header(h5name)
-    if isfile(h5name)
-        try
-            fbh = h5open(h5->Filterbank.Header(h5), h5name)
-        catch
-            fbh = Filterbank.Header()
-        end
-    else
-        fbh = Filterbank.Header()
-    end
-    # Add h5name field to header
-    fbh[:h5name] = h5name
-    fbh
-end
 
 ##
 
@@ -55,9 +34,38 @@ end
 
 ##
 
+@info "waiting for workers to startup"
+@time ws = fetch(addworkertask)
+
+@info "defining h5header function everywhere"
+
+@everywhere using HDF5, Blio
+
+@everywhere function h5header(h5name)
+    if isfile(h5name)
+        try
+            fbh = h5open(h5->Filterbank.Header(h5), h5name)
+        catch
+            fbh = Filterbank.Header()
+        end
+    else
+        fbh = Filterbank.Header()
+    end
+    # Add h5name field to header
+    fbh[:h5name] = h5name
+    fbh
+end
+
+##
+
 @info "parallel map h5names to headers using workers"
 @time fbhs = pmap(h5header, ProgressBar(h5names); batch_size=50)
 @info "got $(length(fbhs)) headers"
+
+##
+
+@info "removing worker processes"
+rmprocs(ws)
 
 ##
 
@@ -72,9 +80,6 @@ end
 end;
 
 ##
-
-@info "removing worker processes"
-rmprocs(ws)
 
 # Any errors?
 fbhsbad = filter(fbh->length(fbh)<=1, fbhs)
